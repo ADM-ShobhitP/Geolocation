@@ -1,0 +1,127 @@
+
+services:
+
+  db:
+    image: postgres:latest
+    container_name: postgres_1
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./dockerdata/pgdata:/var/lib/postgresql/data
+
+  backend:
+    build: ./backend
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - ./backend:/code
+    ports:
+      - 8000:8000
+    environment:
+      - POSTGRES_NAME=Geolocation
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_HOST=db
+    depends_on:
+      - db
+
+  frontend:
+    build: ./webfrontend
+    environment:
+      - NEXT_PUBLIC_SUPERSET_DASHBOARD_ID=97e8fab5-5626-42e5-bf73-aa61b00d19c9
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./webfrontend:/frontend
+
+  superset:
+    build: ./superset
+    ports:
+      - "8088:8088"    
+    depends_on:
+      - db
+    volumes:
+      - ./superset/superset_config.py:/app/superset_config.py
+    environment:
+      - SUPERSET_CONFIG_PATH=/app/superset_config.py
+      - SUPERSET_DB_URI=postgresql://postgres:password@db:5432/superset
+  
+  mindsdb:
+    build: ./mindsdb-lightwood
+    environment:
+      MINDSDB_APIS: "http,postgres"
+      MINDSDB_DISABLE_GUI_UPDATES: "true"
+    ports:
+      - "47334:47334"
+      - "55432:55432"
+    volumes:
+      - ./mindsdb_data:/root/mdb_storage
+    restart: always
+    depends_on:
+      - db
+  
+  es01:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.7.1
+    labels:
+      co.elastic.logs/module: elasticsearch
+    # volumes:
+      # - ./dockerdata/certs:/usr/share/elasticsearch/config/certs
+      # - ./dockerdata/esdata01:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    environment:
+      - node.name=es01
+      - cluster.name=docker-cluster
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - xpack.security.transport.ssl.enabled=false
+      - ELASTIC_PASSWORD=changeme
+    mem_limit: 1073741824
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -s --cacert config/certs/ca/ca.crt https://localhost:9200 | grep -q 'missing authentication credentials'",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 120
+
+  kibana:
+    depends_on:
+      es01:
+        condition: service_healthy
+    image: docker.elastic.co/kibana/kibana:8.7.1
+    labels:
+      co.elastic.logs/module: kibana
+    # volumes:
+      # - ./dockerdata/certs:/usr/share/kibana/config/certs
+      # - ./dockerdata/kibanadata:/usr/share/kibana/data
+    ports:
+      - "5601:5601"
+    environment:
+      - SERVERNAME=kibana
+      - ELASTICSEARCH_HOSTS=http://es01:9200
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=changeme
+      # - ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES=config/certs/ca/ca.crt
+      - XPACK_SECURITY_ENCRYPTIONKEY=c34d38b3a14956121ff2170e5030b471551370178f43e5626eec58b04a30fae2
+      - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=c34d38b3a14956121ff2170e5030b471551370178f43e5626eec58b04a30fae2
+      - XPACK_REPORTING_ENCRYPTIONKEY=c34d38b3a14956121ff2170e5030b471551370178f43e5626eec58b04a30fae2
+    mem_limit: 1073741824
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -s -I http://localhost:5601 | grep -q 'HTTP/1.1 302 Found'",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 120
+
